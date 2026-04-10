@@ -1,0 +1,25 @@
+# ReVox 稳定版配置文件
+
+render:
+  size: 256
+  still: true
+  preprocess: "full"
+  enhancer: null
+
+enhancements:
+  denoise: false
+  superres: true
+  method: "face_fix"
+  scale: 2
+  sharpness: 0.4
+  clip_limit: 1.2
+
+paths:
+  source_image: "examples/image_test.png"
+  driven_audio: "examples/audio_test.wav"
+  output_path: "examples/result.mp4"
+  sadtalker_path: "../SadTalker"
+
+system:
+  log_level: "INFO"
+  temp_dir: "temp_revox"

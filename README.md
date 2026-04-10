@@ -54,61 +54,29 @@ SadTalker：ReVox会自动在同级目录寻找 SadTalker/。请确保 SadTalker
 
 视频超分：针对低显存用户，支持 256 模式生成后通过插值算法放大回高清尺寸。
 
-元数据提取：一键导出视频的编码、分辨率及帧率信息至 JSON。
+信息提取：一键打印视频的相关信息，包括分辨率、帧率、时长等。
 
 # 使用手册
 
-标准生成：python -m src.cli --image image\_test.png --audio audio\_test.wav
+命令行参数：
 
-低显存模式：python -m src.cli --image i.png --audio a.wav --size 256 --superres
+\--source\_image 用于手动输入人脸图片路径
 
-高质量降噪：python -m src.cli --image i.png --audio a.wav --denoise
+\--driven\_audio 用于手动输入驱动音频路径
 
-静止模式：python -m src.cli --image i.png --audio a.wav --still
+\--output\_dir 用于手动选择输出目录
 
-参数说明：
+\--upscale 用于手动选择是否开启画质增强
 
-\--size: 生成视频的基础分辨率 (256/512)。6GB 显存建议选 256。
+\--method 用于手动选择增强模式（需要配合 --upscale）
 
-\--superres: 是否在渲染后执行超分辨率放大。
+\--keep\_temp 用于保留临时文件
 
-\--scale: 超分倍数，默认 2。
+\--config 用于手动输入配置文件路径
 
-\--sadtalker\_path: 手动指定 SadTalker 的安装路径。
+配置文件：
 
-# API参考
+在config/default.yaml中存放着默认配置文件，系统在没有收到--config相关文件时会自动尝试调用默认配置文件
 
-如果想要在Python脚本中调用ReVox，可以使用run\_sadtalker接口：
 
-from src import run\_sadtalker
-
-run\_sadtalker(
-
-&#x20;   source\_image="path/to/img.png",
-
-&#x20;   driven\_audio="path/to/audio.wav",
-
-&#x20;   output\_path="output.mp4",
-
-&#x20;   denoise\_flag=True,
-
-&#x20;   superres\_flag=True,
-
-&#x20;   size=256
-
-)
-
-# 常见问题
-
-Q: 遇到 CUDA Out of Memory (OOM) 怎么办？
-
-A: 这是显存不足。请务必使用 --size 256 参数。如果开启了浏览器或其他显存占用程序，请先关闭。
-
-# 贡献与感谢
-
-基于 SadTalker 开源项目。
-
-感谢所有贡献者。
-
-# 
 

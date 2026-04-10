@@ -1,117 +1,74 @@
 import os
 import subprocess
-import sys
-import shutil
 import glob
-from src.utils import audio_utils, image_utils, video_utils
-from src.enhancers import denoise, superres
+from src.core.logger import logger
+from src.core.exceptions import DependencyError, MediaProcessError
+from src.utils.security_utils import (
+    safe_path_check,
+    validate_file_type,
+    SecureFileOperations
+)
 
 
-def run_sadtalker(source_image, driven_audio, output_path, sadtalker_path=None,
-                  enhancer=None, denoise_flag=False, superres_flag=False, superres_scale=2,
-                  extract_info=False, info_json=None,
-                  sadtalker_python=None, size=256, **kwargs):
-    """
-    重构后的核心调度函数：支持显存优化参数 size
-    """
-
-    if not sadtalker_python:
-        sadtalker_python = sys.executable
-
-    if not sadtalker_path:
-        src_path = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(src_path)
-        sadtalker_path = os.path.join(os.path.dirname(project_root), 'SadTalker')
-
-    if not os.path.exists(sadtalker_path):
-        raise FileNotFoundError(f"未找到 SadTalker 目录: {sadtalker_path}")
-
-    temp_dir = os.path.abspath(os.path.join(os.getcwd(), 'temp_revox'))
-    os.makedirs(temp_dir, exist_ok=True)
-
+def run_sadtalker(source_image, driven_audio, config):
+    sadtalker_root = config.get("paths.sadtalker_path")
+    if not sadtalker_root or not os.path.exists(sadtalker_root):
+        raise DependencyError(f"未配置有效的 SadTalker 路径: {sadtalker_root}")
+    secure_ops = SecureFileOperations()
+    if not safe_path_check(source_image):
+        raise ValueError(f"非法的源图像路径: {source_image}")
+    if not safe_path_check(driven_audio):
+        raise ValueError(f"非法的驱动音频路径: {driven_audio}")
+    if not safe_path_check(sadtalker_root):
+        raise ValueError(f"非法的SadTalker路径: {sadtalker_root}")
+    allowed_image_types = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp']
+    allowed_audio_types = ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg']
+    if not validate_file_type(source_image, allowed_image_types):
+        raise ValueError(f"不支持的图像文件类型: {source_image}")
+    if not validate_file_type(driven_audio, allowed_audio_types):
+        raise ValueError(f"不支持的音频文件类型: {driven_audio}")
+    source_image_abs = os.path.abspath(source_image)
+    driven_audio_abs = os.path.abspath(driven_audio)
+    result_dir_abs = secure_ops.secure_join(os.getcwd(), "temp_sadtalker")
+    secure_ops.secure_mkdir(result_dir_abs)
+    sadtalker_root_abs = os.path.abspath(sadtalker_root)
+    if not safe_path_check(sadtalker_root_abs):
+        raise ValueError(f"非法的SadTalker绝对路径: {sadtalker_root_abs}")
+    cmd = [
+        "python", os.path.join(sadtalker_root_abs, "inference.py"),
+        "--source_image", source_image_abs,
+        "--driven_audio", driven_audio_abs,
+        "--result_dir", result_dir_abs,
+        "--preprocess", config.get("render.preprocess", "full"),
+        "--enhancer", "none",
+        "--background_enhancer", "none"
+    ]
+    if config.get("render.still", True):
+        cmd.append("--still")
+    logger.info(f"启动 SadTalker 底层推理... (目标目录: {result_dir_abs})")
     try:
-        # 1. 预处理
-        print("[*] 正在预处理输入数据...")
-        std_image = os.path.join(temp_dir, "temp_img.png")
-        image_utils.resize_and_pad(source_image, std_image)
-
-        std_audio = os.path.join(temp_dir, "temp_audio.wav")
-        audio_utils.preprocess_audio(driven_audio, std_audio)
-
-        if denoise_flag:
-            print("[*] 正在执行音频降噪...")
-            denoised_audio = os.path.join(temp_dir, "temp_audio_denoised.wav")
-            denoise.process_audio(std_audio, denoised_audio)
-            std_audio = denoised_audio
-
-        # 2. 调用 SadTalker (核心修复点)
-        print(f"[*] 启动 SadTalker 推理进程 (Size: {size})...")
-
-        # 强制添加 SadTalker 路径到环境变量
-        env = os.environ.copy()
-        env["PYTHONPATH"] = sadtalker_path + os.pathsep + env.get("PYTHONPATH", "")
-
-        cmd = [
-            sadtalker_python, 'inference.py',
-            '--source_image', os.path.abspath(std_image),
-            '--driven_audio', os.path.abspath(std_audio),
-            '--result_dir', os.path.abspath(temp_dir),
-            '--size', str(size)  # 显式传递 size 参数
-        ]
-
-        if kwargs.get('still'): cmd.append('--still')
-        if enhancer: cmd.extend(['--enhancer', enhancer])
-
-        # 在 SadTalker 目录下运行，确保 ./checkpoints 路径正确
-        subprocess.run(cmd, check=True, cwd=sadtalker_path, env=env)
-
-        # 3. 寻找生成的视频
-        generated_videos = glob.glob(os.path.join(temp_dir, '**/*.mp4'), recursive=True)
-        if not generated_videos:
-            raise RuntimeError("SadTalker 生成视频失败")
-        raw_video = max(generated_videos, key=os.path.getmtime)
-
-        # 4. 后处理增强
-        video_to_merge = raw_video
-        if superres_flag:
-            print(f"[*] 正在执行视频超分 ({superres_scale}x)...")
-            upscaled_video = os.path.join(temp_dir, "temp_upscaled.mp4")
-            superres.enhance_video(raw_video, upscaled_video, scale=superres_scale)
-            video_to_merge = upscaled_video
-
-        # 5. 合并音视频
-        print("[*] 正在合成最终视频并清理...")
-        video_utils.merge_audio_video(video_to_merge, std_audio, output_path)
-
-        if extract_info:
-            info = video_utils.extract_video_info(output_path, save_json=info_json)
-            print(f"[\u2713] 处理完成! 最终分辨率: {info['width']}x{info['height']}")
-
-        return output_path
-
-    finally:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-
-
-if __name__ == "__main__":
-    # 自动定位项目根目录 (ReVox/)
-    current_file = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file))
-
-    # 打印路径信息便于调试
-    print(f"项目根目录: {project_root}")
-
-    # 调用测试
-    run_sadtalker(
-        source_image=os.path.join(project_root, "examples", "image_test.png"),
-        driven_audio=os.path.join(project_root, "examples", "audio_test.wav"),
-        output_path=os.path.join(project_root, "examples", "test_output_final.mp4"),
-        enhancer=None,
-        still=True,
-        denoise_flag=True,
-        superres_flag=True,
-        superres_scale=2,
-        extract_info=True,
-        info_json=os.path.join(project_root, "examples", "test_info.json")
-    )
+        result = subprocess.run(
+            cmd,
+            check=False,
+            cwd=sadtalker_root_abs,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.warning(f"SadTalker 进程返回非零代码: {result.returncode}")
+            logger.debug(f"SadTalker 错误输出: {result.stderr}")
+    except Exception as e:
+        logger.error(f"SadTalker 调用发生系统级错误: {e}")
+        raise
+    search_pattern = os.path.join(result_dir_abs, "**", "*.mp4")
+    files = glob.glob(search_pattern, recursive=True)
+    if not files:
+        raise MediaProcessError("SadTalker 未能生成任何视频产物，请检查显存状态或输入素材。")
+    latest_video = max(files, key=os.path.getmtime)
+    if not safe_path_check(latest_video):
+        raise ValueError(f"非法的视频文件路径: {latest_video}")
+    if not validate_file_type(latest_video, ['.mp4', '.avi', '.mov', '.webm']):
+        raise ValueError(f"生成的视频文件类型不受支持: {latest_video}")
+    logger.info(f"成功捕获 SadTalker 原始视频: {latest_video}")
+    return latest_video

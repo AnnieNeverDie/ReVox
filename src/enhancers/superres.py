@@ -1,37 +1,42 @@
+"""
+单帧超分模块
+"""
 import cv2
+import os
+from src.core.logger import logger
+from src.core.exceptions import MediaProcessError
+from .engines import FastUpscaler, FaceFixUpscaler
+def run_video_upscale(input_path, output_path, config_manager, method="fast"):
+    if not os.path.exists(input_path):
+        raise MediaProcessError(f"超分失败：找不到文件 {input_path}")
 
-
-def enhance_frame(frame, scale=2, method='cubic'):
-    """核心算法：只负责把传进来的一帧变大"""
-    inter_methods = {
-        'cubic': cv2.INTER_CUBIC,
-        'linear': cv2.INTER_LINEAR,
-        'lanczos': cv2.INTER_LANCZOS4
-    }
-    inter = inter_methods.get(method.lower(), cv2.INTER_CUBIC)
-
-    new_w = int(frame.shape[1] * scale)
-    new_h = int(frame.shape[0] * scale)
-    return cv2.resize(frame, (new_w, new_h), interpolation=inter)
-
-
-def enhance_video(input_path, output_path, scale=2, method='cubic'):
-    """工程封装：处理视频流"""
+    scale = config_manager.get("enhancements.scale", 2)
+    if method == "face_fix" or method == "pro":
+        engine = FaceFixUpscaler(scale=scale)
+    else:
+        engine = FastUpscaler(scale=scale, sharpness=0.6)
     cap = cv2.VideoCapture(input_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) * scale)
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * scale)
-
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        # 调用核心单帧增强
-        enriched_frame = enhance_frame(frame, scale, method)
-        out.write(enriched_frame)
-
-    cap.release()
-    out.release()
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    out = cv2.VideoWriter(
+        output_path,
+        cv2.VideoWriter_fourcc(*'mp4v'),
+        fps,
+        (w * scale, h * scale)
+    )
+    logger.info(f"开始渲染增强视频: {total}帧 | 目标分辨率: {w * scale}x{h * scale}")
+    try:
+        idx = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret: break
+            enhanced_frame = engine.process(frame)
+            out.write(enhanced_frame)
+            idx += 1
+            if idx % 50 == 0:
+                logger.info(f"进度: {idx}/{total} (引擎: {engine.__class__.__name__})")
+    finally:
+        cap.release()
+        out.release()
     return output_path
