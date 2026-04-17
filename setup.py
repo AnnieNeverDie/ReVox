@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ReVox",
-    version="2.0.0",
+    version="1.0.0",
     description="ReVox: 稳定版数字人管线 - 基于 SadTalker 的音视频增强全流程工具",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
